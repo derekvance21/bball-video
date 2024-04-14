@@ -1,8 +1,7 @@
 <script lang="ts">
     import vod from "../assets/vod.mp4";
     import paper from 'paper/dist/paper-core';
-    import { onMount } from "svelte";
-    import { writable, type Writable } from "svelte/store";
+    import { onMount, tick } from "svelte";
     import PaperCanvas from "./PaperCanvas.svelte";
 
     let video: HTMLVideoElement;
@@ -12,12 +11,7 @@
     let currentTime: number;
     let duration: number;
 
-    interface Frame {
-        currentTime: number;
-        jsonData: string;
-    }
-
-    let frameStore: Writable<Map<number, Frame>> = writable(new Map());
+    let layerIds: Set<number> = new Set();
 
     onMount(() => {
         currentTime = 60 * 15 + 40; // tipoff
@@ -37,6 +31,9 @@
         if (path) {
             path.add(event.point);
         }
+
+        // set time of frame
+        paper.project.activeLayer.data.time = currentTime;
     }
 
     function onMouseUp(customEvent: CustomEvent) {
@@ -52,106 +49,117 @@
             if (path) {
                 path.simplify(10);
             }
-            // path.closePath(); // close path AFTER simplifying
         }
     }
 
-    function saveActiveLayer() {
+    function checkSaveActiveLayer(newLayer = true) {
         const activeLayer = paper.project.activeLayer;
         if (!activeLayer.isEmpty()) {
-            frameStore.update(frameMap => {
-                const id = activeLayer.id;
-                
-                if (!frameMap.has(id)) {
-                    console.log('new frame');
-                }
-                
-                const json = activeLayer.exportJSON();
-
-                console.log(json)
-
-                frameMap.set(id, {
-                    jsonData: json,
-                    currentTime: currentTime,
-                });
-                return frameMap;
-            });
-        }
-    }
-    
-    function onPlay() {
-        if (!paper.project.activeLayer.isEmpty()) {
-            saveActiveLayer();
-        }
-        const items = paper.project.activeLayer.removeChildren();
-        new paper.Layer(); // makes new Layer active layer
-        // TODO: do something with these. Save them?
-    }
-
-    function pause() {
-        video.pause();
-    }
-
-    function jumpToFrame(frame: Frame) {
-        return () => {
-            if (!paused) {
-                return;
+            layerIds.add(activeLayer.id);
+            layerIds = layerIds; // trigger Svelte reactivity
+            activeLayer.visible = false;
+            if (newLayer) {
+                new paper.Layer(); // makes new Layer active layer
             }
-
-            console.log(currentTime, '->', frame.currentTime);
-            currentTime = frame.currentTime;
-
-            const item = paper.project.importJSON(frame.jsonData);
-            console.log(item);
-            // paper.project.importJSON(frame.jsonData);
         }
+    }
+
+    function jumpToLayer(id: number) {
+        return () => {
+            paused = true;
+
+            checkSaveActiveLayer(false);
+            
+            const frameLayer = paper.project.getItem({
+                id,
+                class: paper.Layer,
+            }) as paper.Layer;
+            
+            const time = frameLayer.data.time;
+                
+            // confirmed this type of error does not occur in Chrome, but does in Firefox
+            // https://github.com/sveltejs/svelte/issues/3524
+            // even if you video.pause() right here, and then set the currentTime with
+            // `currentTime = time;`, the video will pause but not jump to the time.
+            // If you call this again via a click, it will jump the currentTime
+            // so the tick() is a Svelte workaround mentioned in the above issue to get
+            // this to work in Firefox
+            tick().then(() => currentTime = time);
+
+            frameLayer.activate();
+            frameLayer.visible = true;
+        }
+    }
+
+    function handleSlider() {
+        paused = true;
+        checkSaveActiveLayer();
+    }
+
+    function handlePlay() {
+        checkSaveActiveLayer();
     }
 </script>
 
 <section>
     <div class="container">
-        <video
-            bind:this={video}
-            bind:paused
-            bind:currentTime
-            bind:duration
-            on:play={onPlay}
-            autoplay
-            muted
-            disablepictureinpicture={true}
-        >
-            <source src={vod} type="video/mp4" />
-            <track kind="captions" />
-        </video>
-        <div class="canvas">
-            <PaperCanvas
-                on:onmousedown={onMouseDown}
-                on:onmousedrag={onMouseDrag}
-                on:onmouseup={onMouseUp}
-            />
+        <div class="video-canvas">
+            <video
+                bind:this={video}
+                bind:paused
+                bind:currentTime
+                bind:duration
+                on:play={handlePlay}
+                autoplay
+                muted
+                disablepictureinpicture={true}
+            >
+                <source src={vod} type="video/mp4" />
+                <track kind="captions" />
+            </video>
+            <div class="canvas">
+                <PaperCanvas
+                    on:onmousedown={onMouseDown}
+                    on:onmousedrag={onMouseDrag}
+                    on:onmouseup={onMouseUp}
+                />
+            </div>
         </div>
-    </div>
 
-    <input
-        type="range"
-        min={0}
-        max={duration}
-        step={1}
-        bind:value={currentTime}
-        on:input={pause}
-    />
-
-    <div>
-        {#each $frameStore as [id, frame]}
-		    <p on:click={jumpToFrame(frame)}>{frame.currentTime}: {frame.jsonData.substring(0, 20)}...</p>
-	    {/each}
+        <input
+            type="range"
+            min={0}
+            max={duration}
+            step={1}
+            bind:value={currentTime}
+            on:input={handleSlider}
+        />
+        
+        <div class="flex">
+            {#each layerIds as id}
+                <button
+                    type="button"
+                    on:click={jumpToLayer(id)}
+                >{id}</button>
+            {/each}
+        </div>
     </div>
 
 </section>
 
 <style>
+    .flex {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+
     .container {
         width: 1024px;
+    }
+    
+    .video-canvas {
+        width: 100%;
         height: 576px;
         position: relative;
     }
