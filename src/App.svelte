@@ -4,9 +4,7 @@
 
 <div>
 
-    <div class="card">
-        <CanvasOnVideo />
-    </div>
+    <CanvasOnVideo />
 
 </div>
 

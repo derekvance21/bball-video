@@ -2,6 +2,7 @@
     import vod from "../assets/vod.mp4";
     import paper from 'paper/dist/paper-core';
     import { onMount } from "svelte";
+    import { writable, type Writable } from "svelte/store";
     import PaperCanvas from "./PaperCanvas.svelte";
 
     let video: HTMLVideoElement;
@@ -10,6 +11,13 @@
     let paused: boolean;
     let currentTime: number;
     let duration: number;
+
+    interface Frame {
+        currentTime: number;
+        jsonData: string;
+    }
+
+    let frameStore: Writable<Map<number, Frame>> = writable(new Map());
 
     onMount(() => {
         currentTime = 60 * 15 + 40; // tipoff
@@ -48,9 +56,55 @@
         }
     }
 
+    function saveActiveLayer() {
+        const activeLayer = paper.project.activeLayer;
+        if (!activeLayer.isEmpty()) {
+            frameStore.update(frameMap => {
+                const id = activeLayer.id;
+                
+                if (!frameMap.has(id)) {
+                    console.log('new frame');
+                }
+                
+                const json = activeLayer.exportJSON();
+
+                console.log(json)
+
+                frameMap.set(id, {
+                    jsonData: json,
+                    currentTime: currentTime,
+                });
+                return frameMap;
+            });
+        }
+    }
+    
     function onPlay() {
+        if (!paper.project.activeLayer.isEmpty()) {
+            saveActiveLayer();
+        }
         const items = paper.project.activeLayer.removeChildren();
+        new paper.Layer(); // makes new Layer active layer
         // TODO: do something with these. Save them?
+    }
+
+    function pause() {
+        video.pause();
+    }
+
+    function jumpToFrame(frame: Frame) {
+        return () => {
+            if (!paused) {
+                return;
+            }
+
+            console.log(currentTime, '->', frame.currentTime);
+            currentTime = frame.currentTime;
+
+            const item = paper.project.importJSON(frame.jsonData);
+            console.log(item);
+            // paper.project.importJSON(frame.jsonData);
+        }
     }
 </script>
 
@@ -78,14 +132,27 @@
         </div>
     </div>
 
-    <input type="range" min={0} max={duration} step={1} bind:value={currentTime} />
+    <input
+        type="range"
+        min={0}
+        max={duration}
+        step={1}
+        bind:value={currentTime}
+        on:input={pause}
+    />
+
+    <div>
+        {#each $frameStore as [id, frame]}
+		    <p on:click={jumpToFrame(frame)}>{frame.currentTime}: {frame.jsonData.substring(0, 20)}...</p>
+	    {/each}
+    </div>
 
 </section>
 
 <style>
     .container {
-        width: 720px;
-        height: 406px;
+        width: 1024px;
+        height: 576px;
         position: relative;
     }
 
