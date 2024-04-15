@@ -1,82 +1,36 @@
 <script lang="ts">
     import vod from "../assets/vod.mp4";
-    import paper from 'paper/dist/paper-core';
     import { onMount, tick } from "svelte";
-    import PaperCanvas from "./PaperCanvas.svelte";
+    import Drawing from "./Drawing.svelte";
+    import { PathStyle } from "./drawing";
 
     let video: HTMLVideoElement;
 
-    let path: paper.Path;
+    let drawing: Drawing;
+
     let paused: boolean;
     let currentTime: number;
     let duration: number;
 
-    let layerIds: Set<number> = new Set();
+    let pathStyle: number = PathStyle.Normal;
+
+    let layerMap: Map<number, number> = new Map();
 
     onMount(() => {
         currentTime = 60 * 15 + 40; // tipoff
     });
 
-    function onMouseDown(customEvent: CustomEvent) {
-        const event: paper.MouseEvent = customEvent.detail;
-        path = new paper.Path({
-            segments: [event.point],
-            strokeColor: "violet",
-        });
-    }
-
-    function onMouseDrag(customEvent: CustomEvent) {
-        const event: paper.MouseEvent = customEvent.detail;
+    function onBeginDraw(customEvent: CustomEvent) {
         paused = true;
-        if (path) {
-            path.add(event.point);
-        }
-
-        // set time of frame
-        paper.project.activeLayer.data.time = currentTime;
+        layerMap.set(customEvent.detail.layerId, currentTime);
+        layerMap = layerMap;
     }
 
-    function onMouseUp(customEvent: CustomEvent) {
-        const event: paper.MouseEvent = customEvent.detail;
-        const segmentCount = path.segments.length;
-
-        if (segmentCount === 1) {
-            if (path) {
-                path.remove();
-            }
-            paused = !paused;
-        } else {
-            if (path) {
-                path.simplify(10);
-            }
-        }
-    }
-
-    function checkSaveActiveLayer(newLayer = true) {
-        const activeLayer = paper.project.activeLayer;
-        if (!activeLayer.isEmpty()) {
-            layerIds.add(activeLayer.id);
-            layerIds = layerIds; // trigger Svelte reactivity
-            activeLayer.visible = false;
-            if (newLayer) {
-                new paper.Layer(); // makes new Layer active layer
-            }
-        }
-    }
-
-    function jumpToLayer(id: number) {
+    function jumpToLayer(id: number, time: number) {
         return () => {
             paused = true;
-
-            checkSaveActiveLayer(false);
+            drawing.setActiveLayer(id);
             
-            const frameLayer = paper.project.getItem({
-                id,
-                class: paper.Layer,
-            }) as paper.Layer;
-            
-            const time = frameLayer.data.time;
-                
             // confirmed this type of error does not occur in Chrome, but does in Firefox
             // https://github.com/sveltejs/svelte/issues/3524
             // even if you video.pause() right here, and then set the currentTime with
@@ -84,21 +38,31 @@
             // If you call this again via a click, it will jump the currentTime
             // so the tick() is a Svelte workaround mentioned in the above issue to get
             // this to work in Firefox
-            tick().then(() => currentTime = time);
-
-            frameLayer.activate();
-            frameLayer.visible = true;
+            tick().then(() => {
+                currentTime = time;
+            });
         }
     }
 
-    function handleSlider() {
+    function onSliderInput() {
         paused = true;
-        checkSaveActiveLayer();
+        drawing.unsetActiveLayer();
     }
 
-    function handlePlay() {
-        checkSaveActiveLayer();
+    function onPlay() {
+        drawing.unsetActiveLayer();
     }
+
+    function printSeconds(seconds: number) {
+        const h = (seconds / 3600) >> 0;
+        const m = (seconds % 3600 / 60) >> 0;
+        const s = (seconds % 60) >> 0;
+        const minTwoDigits = (i: number) => {
+            return i.toString().padStart(2, "0");
+        }
+        return `${h}:${minTwoDigits(m)}:${minTwoDigits(s)}`
+    }
+
 </script>
 
 <section>
@@ -109,7 +73,7 @@
                 bind:paused
                 bind:currentTime
                 bind:duration
-                on:play={handlePlay}
+                on:play={onPlay}
                 autoplay
                 muted
                 disablepictureinpicture={true}
@@ -117,12 +81,56 @@
                 <source src={vod} type="video/mp4" />
                 <track kind="captions" />
             </video>
-            <div class="canvas">
-                <PaperCanvas
-                    on:onmousedown={onMouseDown}
-                    on:onmousedrag={onMouseDrag}
-                    on:onmouseup={onMouseUp}
+            <div class="drawing">
+                <Drawing
+                    bind:this={drawing}
+                    on:begindraw={onBeginDraw}
+                    on:click={() => paused = !paused}
+                    bind:pathStyle={pathStyle}
                 />
+            </div>
+            <div class="settings">
+                <label>
+                    <input
+                        type="radio"
+                        value={PathStyle.Normal}
+                        bind:group={pathStyle}
+                    />
+                    Normal
+                </label>
+                <label>
+                    <input
+                        type="radio"
+                        checked
+                        value={PathStyle.Cut}
+                        bind:group={pathStyle}
+                    />
+                    Cut
+                </label>
+                <label>
+                    <input
+                        type="radio"
+                        value={PathStyle.Pass}
+                        bind:group={pathStyle}
+                    />
+                    Pass
+                </label>
+                <label>
+                    <input
+                        type="radio"
+                        value={PathStyle.Screen}
+                        bind:group={pathStyle}
+                    />
+                    Screen
+                </label>
+                <label>
+                    <input
+                        type="radio"
+                        value={PathStyle.Dribble}
+                        bind:group={pathStyle}
+                    />
+                    Dribble
+                </label>
             </div>
         </div>
 
@@ -132,15 +140,15 @@
             max={duration}
             step={1}
             bind:value={currentTime}
-            on:input={handleSlider}
+            on:input={onSliderInput}
         />
         
         <div class="flex">
-            {#each layerIds as id}
+            {#each layerMap as [id, time]}
                 <button
                     type="button"
-                    on:click={jumpToLayer(id)}
-                >{id}</button>
+                    on:click={jumpToLayer(id, time)}
+                >{printSeconds(time)}</button>
             {/each}
         </div>
     </div>
@@ -154,13 +162,17 @@
         flex-wrap: wrap;
     }
 
+    label {
+        display: flex;
+    }
+
     .container {
-        width: 1024px;
+        width: 896px;
     }
     
     .video-canvas {
         width: 100%;
-        height: 576px;
+        height: 504px;
         position: relative;
     }
 
@@ -172,12 +184,20 @@
         height: 100%;
     }
 
-    .canvas {
+    .drawing {
         position: absolute;
         top: 0;
         left: 0;
         width: 100%;
         height: 100%;
+    }
+
+    .settings {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        position: absolute;
+        left: 100%;
     }
 
     input[type=range] {

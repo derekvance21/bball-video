@@ -6,6 +6,8 @@
 
     let canvas: HTMLCanvasElement;
 
+    export const paperScope = paper;
+
     onMount(() => {
         paper.view.onMouseDown = (e: paper.MouseEvent) => { dispatch('onmousedown', e); };
         paper.view.onMouseDrag = (e: paper.MouseEvent) => { dispatch('onmousedrag', e); };
